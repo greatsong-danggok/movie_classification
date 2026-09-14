@@ -28,7 +28,6 @@ is_test = pd.Series(df.index % 10 < 3, index=df.index)   # 열 편 중 앞 세 �
 X = df[["first_scrn", "first_show", "peak"]].rename(
     columns={"first_scrn": "스크린 수", "first_show": "상영 횟수", "peak": "성수기"})
 y = df["성공"]
-st.caption(f"훈련용 {(~is_test).sum()}편 · 테스트용 {is_test.sum()}편 · 전체 {len(df)}편")
 
 scaler = StandardScaler().fit(X[~is_test])
 logi = LogisticRegression(max_iter=2000).fit(scaler.transform(X[~is_test]), y[~is_test])
@@ -44,7 +43,7 @@ st.metric("로지스틱 회귀 정확도", f"{accuracy_score(y[is_test], (prob >
                                            errors="coerce").dt.strftime("%Y.%m.%d").values})
 확률표 = 확률표.sort_values("추정 확률", ascending=False)
 fig = px.scatter(확률표, x="스크린 수", y="추정 확률", color="실제", hover_name="영화",
-                 log_x=True, color_discrete_map={"성공": "#b07a00", "기준 미달": "#2b7fd6"})
+                 log_x=True, color_discrete_map={"성공": "#d64545", "기준 미달": "#2b7fd6"})
 fig.add_hline(y=0.5, line_dash="dash", annotation_text="문턱값 0.5")
 fig.update_traces(marker=dict(size=11, opacity=0.8))
 fig.update_layout(height=420, xaxis_title="스크린 수(개) · 로그 눈금", yaxis_title="추정 성공 확률")
