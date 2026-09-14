@@ -119,10 +119,76 @@ def 트리읽기(마디=0, 들여=""):
 st.subheader("트리는 어떤 질문을 던지나")
 st.code("\n".join(트리읽기()), language=None)
 st.caption("위에서부터 질문에 답하며 내려가면 마지막 줄의 판정에 닿습니다. "
-           "괄호 안은 그 자리에 있는 훈련용 영화의 편수입니다. "
+           "괄호 안은 그 마디에 있는 훈련용 영화의 편수입니다. "
            "끝마디의 판정은 그 안에서 편수가 많은 쪽입니다. "
            "성공과 기준 미달이 같은 수이면 기준 미달로 판정합니다.")
 
 with st.expander("트리 그림으로 보기"):
     st.graphviz_chart(export_graphviz(tree, out_file=None, feature_names=열이름,
                                       class_names=["기준 미달", "성공"], filled=True, rounded=True))
+
+# 도전 — 두 모델은 무엇을 보고 판단했나
+st.subheader("의사결정트리가 본 것 — 속성 중요도")
+중요도 = pd.Series(tree.feature_importances_, index=X.columns)
+중요도 = 중요도[중요도 > 0].sort_values(ascending=False).round(3).reset_index()
+중요도.columns = ["속성", "중요도"]
+중요도그림 = px.pie(중요도, names="속성", values="중요도", hole=0.35)
+중요도그림.update_traces(textinfo="label+percent", sort=False)
+중요도그림.update_layout(height=300, showlegend=False)
+st.plotly_chart(중요도그림, width="stretch")
+st.caption("중요도는 트리가 그 속성으로 얼마나 많이, 얼마나 크게 나눴는지를 나타냅니다. "
+           "모두 더하면 1이고, 0 이상이라 확률을 높이는 쪽인지 낮추는 쪽인지는 알 수 없습니다. "
+           "이 값은 트리에만 있습니다.")
+
+st.subheader("로지스틱 회귀가 본 것 — 가중치")
+가중치 = pd.Series(logi.coef_[0], index=X.columns).round(3).reset_index()
+가중치.columns = ["속성", "가중치"]
+가중치["방향"] = ["성공 확률을 올림" if v > 0 else "성공 확률을 내림" for v in 가중치["가중치"]]
+가중치그림 = px.bar(가중치.sort_values("가중치"), x="가중치", y="속성", orientation="h",
+                color="방향", color_discrete_map={"성공 확률을 올림": "#b07a00", "성공 확률을 내림": "#2b7fd6"})
+가중치그림.add_vline(x=0, line_width=1.5, line_color="#1c2230")
+가중치그림.update_layout(height=300, yaxis_title=None, legend_title_text="")
+st.plotly_chart(가중치그림, width="stretch")
+st.caption(f"절편 {logi.intercept_[0]:.3f} · 가중치는 표준화한 값에 곱하는 수입니다. "
+           "막대가 0보다 오른쪽이면 그 값이 클수록 성공 확률이 올라가고, 왼쪽이면 내려갑니다. "
+           "중요도와 달리 부호가 있고, 모두 더해도 1이 되지 않습니다.")
+
+# 속성을 골라 다시 학습하면 정확도가 어떻게 달라지나
+PEOPLE = "https://raw.githubusercontent.com/greatsong/modudata/main/data/kobis_people.csv"
+
+
+@st.cache_data
+def load_people():
+    return pd.read_csv(PEOPLE, encoding="utf-8-sig", dtype={"movieCd": str})
+
+
+st.subheader("속성을 골라 다시 학습해 보기")
+확장 = df.merge(load_people()[["movieCd", "actors_n", "lead_n", "showTm", "watchGrade", "company"]],
+              on="movieCd", how="left")
+확장["청소년관람불가"] = (확장["watchGrade"] == "청소년관람불가").astype(float)
+큰곳 = 확장.loc[~is_test, "company"].value_counts().head(5).index   # 대형 배급사는 훈련용에서만 정한다
+확장["대형 배급사"] = 확장["company"].isin(큰곳).astype(float)
+확장 = 확장.rename(columns={"first_scrn": "스크린 수", "first_show": "상영 횟수", "peak": "성수기",
+                         "actors_n": "배우 수", "lead_n": "주연 수", "showTm": "상영시간"})
+후보 = ["스크린 수", "상영 횟수", "성수기", "배우 수", "주연 수", "상영시간", "청소년관람불가", "대형 배급사"]
+
+고른속성 = st.multiselect("입력으로 사용할 속성", 후보, default=["스크린 수", "상영 횟수", "성수기"])
+if not 고른속성:
+    st.info("속성을 하나 이상 골라 주세요.")
+else:
+    쓸수있음 = 확장[고른속성].notna().all(axis=1)
+    A, b = 확장.loc[쓸수있음, 고른속성], y[쓸수있음]
+    시험 = is_test[쓸수있음]
+    if 시험.sum() < 5 or (~시험).sum() < 20:
+        st.warning("고른 속성으로 쓸 수 있는 영화가 너무 적습니다. 속성을 바꿔 보세요.")
+    else:
+        sc2 = StandardScaler().fit(A[~시험])
+        lg2 = LogisticRegression(max_iter=2000).fit(sc2.transform(A[~시험]), b[~시험])
+        tr2 = DecisionTreeClassifier(max_depth=3, min_samples_leaf=5, random_state=0).fit(A[~시험], b[~시험])
+        c1, c2 = st.columns(2)
+        c1.metric("로지스틱 회귀 정확도", f"{accuracy_score(b[시험], lg2.predict(sc2.transform(A[시험]))):.3f}")
+        c2.metric("의사결정트리 정확도", f"{accuracy_score(b[시험], tr2.predict(A[시험])):.3f}")
+        st.caption(f"{len(고른속성)}가지 입력 · 값이 모두 있는 영화 {쓸수있음.sum():,}편으로 학습했습니다"
+                   f"(전체 {len(df):,}편). "
+                   "배우 수·주연 수·상영시간·관람등급·배급사는 7차시 실험실에서 사용한 인물 표에서 가져옵니다. "
+                   "속성을 더한다고 점수가 늘 오르지는 않습니다.")
