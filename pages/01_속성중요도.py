@@ -69,18 +69,20 @@ st.graphviz_chart(export_graphviz(tree, out_file=None, feature_names=list(X.colu
                                   class_names=["기준 미달", "성공"], filled=True))
 st.code(export_text(tree, feature_names=list(X.columns), max_depth=3))
 
-# 도전 — 모델은 무엇을 보고 맞혔나 (앞 코드 끝에 이어 붙일 부분)
-st.subheader("도전 — 모델은 무엇을 보고 맞혔나")
+# 도전 — 모델은 무엇을 보고 맞혔나
+st.subheader("모델은 무엇을 보고 맞혔나")
 중요도 = pd.Series(tree.feature_importances_, index=X.columns)
 중요도 = 중요도[중요도 > 0].sort_values(ascending=False).round(3).reset_index()
 중요도.columns = ["속성", "중요도"]
 st.dataframe(중요도, hide_index=True)
-st.caption("중요도는 이 모델이 무엇을 단서로 삼았는지를 보여 줄 뿐, 그것이 원인이라는 뜻은 아닙니다.")
-
-# 로지스틱 회귀는 부호가 있는 가중치로 답한다
+중요도그림 = px.pie(중요도, names="속성", values="중요도", hole=0.35)
+중요도그림.update_traces(textinfo="label+percent", sort=False)
+중요도그림.update_layout(height=300, showlegend=False)
+st.plotly_chart(중요도그림, width="stretch")
+st.caption("모두 더하면 1이 되므로 조각의 크기가 그대로 기여한 비율입니다.")
 가중치 = pd.Series(logi.coef_[0], index=X.columns).round(3)
 가중치 = 가중치.reindex(가중치.abs().sort_values(ascending=False).index).reset_index()
 가중치.columns = ["속성", "가중치"]
-st.dataframe(가중치.head(10), hide_index=True)
+st.dataframe(가중치, hide_index=True)
 st.caption(f"절편 {logi.intercept_[0]:.3f} · 가중치는 표준화한 값에 곱하는 수입니다. "
            "양수면 성공 쪽으로, 음수면 기준 미달 쪽으로 밉니다.")
