@@ -24,27 +24,55 @@ st.caption(f"누적 관객 {기준:,}명 이상을 성공으로 봅니다 · "
            f"전체 {len(df):,}편 가운데 성공 {df['성공'].sum():,}편")
 st.info("수집된 누적 관객 기록의 분류 연습입니다. 개봉 전 예측 성능을 뜻하지 않습니다.")
 
-is_test = pd.Series(df.index % 10 < 3, index=df.index)   # 열 편 중 앞 세 편을 테스트용으로
-X = df[["first_scrn", "first_show", "peak"]].rename(
-    columns={"first_scrn": "스크린 수", "first_show": "상영 횟수", "peak": "성수기"})
-y = df["성공"]
-st.caption(f"훈련용 {(~is_test).sum()}편 · 테스트용 {is_test.sum()}편 · 전체 {len(df)}편")
+# 입력으로 사용할 속성을 고른다. 이 아래 전부가 여기서 고른 속성을 따른다
+PEOPLE = "https://raw.githubusercontent.com/greatsong/modudata/main/data/kobis_people.csv"
+
+
+@st.cache_data
+def load_people():
+    return pd.read_csv(PEOPLE, encoding="utf-8-sig", dtype={"movieCd": str})
+
+
+확장 = df.merge(load_people()[["movieCd", "actors_n", "lead_n", "showTm", "watchGrade", "company"]],
+              on="movieCd", how="left").reset_index(drop=True)
+확장["테스트용"] = 확장.index % 10 < 3        # 속성을 바꿔도 훈련용·테스트용 구분은 그대로 둔다
+확장["청소년관람불가"] = (확장["watchGrade"] == "청소년관람불가").astype(float)
+큰곳 = 확장.loc[~확장["테스트용"], "company"].value_counts().head(5).index   # 훈련용에서만 정한다
+확장["대형 배급사"] = 확장["company"].isin(큰곳).astype(float)
+확장 = 확장.rename(columns={"first_scrn": "스크린 수", "first_show": "상영 횟수", "peak": "성수기",
+                         "actors_n": "배우 수", "lead_n": "주연 수", "showTm": "상영시간"})
+후보 = ["스크린 수", "상영 횟수", "성수기", "배우 수", "주연 수", "상영시간", "청소년관람불가", "대형 배급사"]
+고른속성 = st.multiselect("입력으로 사용할 속성", 후보, default=["스크린 수", "상영 횟수", "성수기"])
+if not 고른속성:
+    st.warning("속성을 하나 이상 골라 주세요.")
+    st.stop()
+
+쓸수있음 = 확장[고른속성].notna().all(axis=1)   # 고른 속성의 값이 빠진 영화는 이번 학습에서 뺀다
+df = 확장.loc[쓸수있음].reset_index(drop=True)
+is_test = df.pop("테스트용")
+X, y = df[고른속성], df["성공"]
+if is_test.sum() < 5 or (~is_test).sum() < 20:
+    st.warning("고른 속성으로 사용할 수 있는 영화가 너무 적습니다. 속성을 바꿔 보세요.")
+    st.stop()
+st.caption(f"{len(고른속성)}가지 입력 · 값이 모두 있는 영화 {len(df):,}편으로 학습합니다"
+           f"(전체 {len(확장):,}편). "
+           "배우 수·주연 수·상영시간·관람등급·배급사는 7차시 실험실에서 사용한 인물 표에서 가져옵니다. "
+           "속성을 바꾸면 아래 화면이 모두 다시 계산됩니다.")
 
 scaler = StandardScaler().fit(X[~is_test])
 logi = LogisticRegression(max_iter=2000).fit(scaler.transform(X[~is_test]), y[~is_test])
 
 prob = logi.predict_proba(scaler.transform(X[is_test]))[:, 1]
-st.metric("로지스틱 회귀 정확도", f"{accuracy_score(y[is_test], (prob >= 0.5).astype(int)):.3f}")
 확률표 = pd.DataFrame({"영화": df.loc[is_test, "movieNm"].values,
                      "추정 확률": prob.round(3),
                      "실제": ["성공" if v else "기준 미달" for v in y[is_test]],
-                     "스크린 수": df.loc[is_test, "first_scrn"].values,
+                     "스크린 수": df.loc[is_test, "스크린 수"].values,
                      "누적 관객": df.loc[is_test, "total_audi"].values,
                      "개봉일": pd.to_datetime(df.loc[is_test, "openDt"], format="%Y%m%d",
                                            errors="coerce").dt.strftime("%Y.%m.%d").values})
 확률표 = 확률표.sort_values("추정 확률", ascending=False)
 fig = px.scatter(확률표, x="스크린 수", y="추정 확률", color="실제", hover_name="영화",
-                 log_x=True, color_discrete_map={"성공": "#b07a00", "기준 미달": "#2b7fd6"})
+                 log_x=True, color_discrete_map={"성공": "#d64545", "기준 미달": "#2b7fd6"})
 fig.add_hline(y=0.5, line_dash="dash", annotation_text="문턱값 0.5")
 fig.update_traces(marker=dict(size=11, opacity=0.8))
 fig.update_layout(height=420, xaxis_title="스크린 수(개) · 로그 눈금", yaxis_title="추정 성공 확률")
@@ -78,18 +106,28 @@ c1, c2 = st.columns(2)
 c1.metric("로지스틱 회귀 정확도", f"{accuracy_score(y[is_test], (prob >= 0.5).astype(int)):.3f}")
 c2.metric("의사결정트리 정확도", f"{accuracy_score(y[is_test], tree.predict(X[is_test])):.3f}")
 
-단위 = {"스크린 수": "개", "상영 횟수": "회"}
+단위 = {"스크린 수": "개", "상영 횟수": "회", "배우 수": "명", "주연 수": "명", "상영시간": "분"}
+예아니오 = {"성수기": "성수기에 개봉하지 않았는가?",
+          "청소년관람불가": "청소년관람불가 등급이 아닌가?",
+          "대형 배급사": "대형 배급사가 아닌가?"}
 t = tree.tree_
 열이름 = list(X.columns)
+
+
+def 조사(말):
+    """받침이 있으면 '이', 없으면 '가'를 붙인다."""
+    끝 = ord(말[-1])
+    받침 = (끝 - 0xAC00) % 28 if 0xAC00 <= 끝 <= 0xD7A3 else 0
+    return 말 + ("이" if 받침 else "가")
 
 
 def 질문(마디):
     """분기 조건을 한글 질문으로 바꾼다. '예'가 왼쪽 가지다."""
     속성 = 열이름[t.feature[마디]]
     경계 = float(t.threshold[마디])
-    if 속성 == "성수기":
-        return "성수기에 개봉하지 않았는가?"
-    return f"{속성}가 {math.floor(경계):,}{단위.get(속성, '')} 이하인가?"
+    if 속성 in 예아니오:                       # 0과 1뿐인 속성은 경계가 0.5다
+        return 예아니오[속성]
+    return f"{조사(속성)} {math.floor(경계):,}{단위.get(속성, '')} 이하인가?"
 
 
 def 마디설명(마디):
@@ -145,53 +183,13 @@ st.subheader("로지스틱 회귀가 본 것 — 가중치")
 가중치.columns = ["속성", "가중치"]
 가중치["방향"] = ["성공 확률을 올림" if v > 0 else "성공 확률을 내림" for v in 가중치["가중치"]]
 가중치그림 = px.bar(가중치.sort_values("가중치"), x="가중치", y="속성", orientation="h",
-                color="방향", color_discrete_map={"성공 확률을 올림": "#b07a00", "성공 확률을 내림": "#2b7fd6"})
+                color="방향", color_discrete_map={"성공 확률을 올림": "#d64545", "성공 확률을 내림": "#2b7fd6"})
 가중치그림.add_vline(x=0, line_width=1.5, line_color="#1c2230")
 가중치그림.update_layout(height=300, yaxis_title=None, legend_title_text="")
 st.plotly_chart(가중치그림, width="stretch")
 st.caption(f"절편 {logi.intercept_[0]:.3f} · 가중치는 표준화한 값에 곱하는 수입니다. "
            "막대가 0보다 오른쪽이면 그 값이 클수록 성공 확률이 올라가고, 왼쪽이면 내려갑니다. "
            "중요도와 달리 부호가 있고, 모두 더해도 1이 되지 않습니다.")
-
-# 속성을 골라 다시 학습하면 정확도가 어떻게 달라지나
-PEOPLE = "https://raw.githubusercontent.com/greatsong/modudata/main/data/kobis_people.csv"
-
-
-@st.cache_data
-def load_people():
-    return pd.read_csv(PEOPLE, encoding="utf-8-sig", dtype={"movieCd": str})
-
-
-st.subheader("속성을 골라 다시 학습해 보기")
-확장 = df.merge(load_people()[["movieCd", "actors_n", "lead_n", "showTm", "watchGrade", "company"]],
-              on="movieCd", how="left")
-확장["청소년관람불가"] = (확장["watchGrade"] == "청소년관람불가").astype(float)
-큰곳 = 확장.loc[~is_test, "company"].value_counts().head(5).index   # 대형 배급사는 훈련용에서만 정한다
-확장["대형 배급사"] = 확장["company"].isin(큰곳).astype(float)
-확장 = 확장.rename(columns={"first_scrn": "스크린 수", "first_show": "상영 횟수", "peak": "성수기",
-                         "actors_n": "배우 수", "lead_n": "주연 수", "showTm": "상영시간"})
-후보 = ["스크린 수", "상영 횟수", "성수기", "배우 수", "주연 수", "상영시간", "청소년관람불가", "대형 배급사"]
-
-고른속성 = st.multiselect("입력으로 사용할 속성", 후보, default=["스크린 수", "상영 횟수", "성수기"])
-if not 고른속성:
-    st.info("속성을 하나 이상 골라 주세요.")
-else:
-    쓸수있음 = 확장[고른속성].notna().all(axis=1)
-    A, b = 확장.loc[쓸수있음, 고른속성], y[쓸수있음]
-    시험 = is_test[쓸수있음]
-    if 시험.sum() < 5 or (~시험).sum() < 20:
-        st.warning("고른 속성으로 쓸 수 있는 영화가 너무 적습니다. 속성을 바꿔 보세요.")
-    else:
-        sc2 = StandardScaler().fit(A[~시험])
-        lg2 = LogisticRegression(max_iter=2000).fit(sc2.transform(A[~시험]), b[~시험])
-        tr2 = DecisionTreeClassifier(max_depth=3, min_samples_leaf=5, random_state=0).fit(A[~시험], b[~시험])
-        c1, c2 = st.columns(2)
-        c1.metric("로지스틱 회귀 정확도", f"{accuracy_score(b[시험], lg2.predict(sc2.transform(A[시험]))):.3f}")
-        c2.metric("의사결정트리 정확도", f"{accuracy_score(b[시험], tr2.predict(A[시험])):.3f}")
-        st.caption(f"{len(고른속성)}가지 입력 · 값이 모두 있는 영화 {쓸수있음.sum():,}편으로 학습했습니다"
-                   f"(전체 {len(df):,}편). "
-                   "배우 수·주연 수·상영시간·관람등급·배급사는 7차시 실험실에서 사용한 인물 표에서 가져옵니다. "
-                   "속성을 더한다고 점수가 늘 오르지는 않습니다.")
 
 # ④ 팀장에게 보고하기 — 최근 개봉작은 어떻게 될까
 import datetime as dt
@@ -221,12 +219,11 @@ else:
         "영화": df.loc[최근, "movieNm"].values,
         "성공 확률": 확률.round(3),
         "개봉일": 개봉일[최근].dt.strftime("%m월 %d일").values,
-        "스크린 수": df.loc[최근, "first_scrn"].values,
+        "스크린 수": df.loc[최근, "스크린 수"].values,
         "지금까지 관객": df.loc[최근, "total_audi"].values,
         "로지스틱 회귀": ["성공" if p >= 0.5 else "기준 미달" for p in 확률],
         "의사결정트리": ["성공" if v else "기준 미달" for v in tree.predict(X[최근])],
         "실제": ["✅ 이미 넘음" if a >= 기준 else "⏳ 아직" for a in df.loc[최근, "total_audi"]],
-        "학습에 사용": ["아니오" if t else "예" for t in is_test[최근]],
     }).sort_values("성공 확률", ascending=False)
 
     대박 = 보고서[보고서["신호"] == "🔥 대박 조짐"]["영화"].tolist()
@@ -247,8 +244,7 @@ else:
     st.caption(f"최근 {일수}일 안에 개봉한 {len(보고서)}편입니다. "
                f"기준은 누적 관객 {기준 // 10_000}만 명({기준:,}명) 이상입니다. "
                f"두 모델의 판정이 나뉜 영화는 {갈림}편입니다. "
-               "⏳인 영화는 정답이 아직 나오지 않았습니다. "
-               "학습에 사용한 영화를 잘 맞히는 것은 당연하므로 그 줄은 성능의 근거가 되지 않습니다.")
+               "⏳인 영화는 정답이 아직 나오지 않았습니다.")
 
 import re
 
