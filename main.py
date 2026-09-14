@@ -1,4 +1,4 @@
-# main.py — 기록된 관객 수의 기준 충족 여부를 분류한다
+# main.py — 수집된 누적 관객 수가 기준을 넘는지 분류한다
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -21,14 +21,13 @@ df = load_data()
 기준 = st.selectbox("성공 기준 (총 관객)", [500_000, 1_000_000, 3_000_000], index=1)
 df["성공"] = (df["total_audi"] >= 기준).astype(int)
 st.caption(f"성공 {df['성공'].sum()}편 / {len(df)}편")
-st.info("기록된 데이터의 분류 연습입니다. 개봉 전 예측 성능을 뜻하지 않습니다.")
+st.info("수집된 누적 관객 기록의 분류 연습입니다. 개봉 전 예측 성능을 뜻하지 않습니다.")
 
-is_test = df.index % 10 < 3
+is_test = df.index % 10 < 3                      # 열 편 중 앞 세 편을 테스트용으로
 features = df[["first_scrn", "first_show", "peak", "장르", "국가"]]
 Xtr = pd.get_dummies(features[~is_test])
 Xte = pd.get_dummies(features[is_test]).reindex(columns=Xtr.columns, fill_value=0)
 X = pd.concat([Xtr, Xte]).sort_index()
-is_test = df.index % 10 < 3                      # 열 편 중 앞 세 편을 테스트용으로
 st.caption(f"훈련용 {(~is_test).sum()}편 · 테스트용 {is_test.sum()}편 · 전체 {len(df)}편")
 Xtr, Xte = X[~is_test], X[is_test]
 ytr, yte = df["성공"][~is_test], df["성공"][is_test]
