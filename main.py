@@ -22,7 +22,8 @@ st.caption(f"성공 {df['성공'].sum()}편 / {len(df)}편")
 st.info("수집된 누적 관객 기록의 분류 연습입니다. 개봉 전 예측 성능을 뜻하지 않습니다.")
 
 is_test = pd.Series(df.index % 10 < 3, index=df.index)   # 열 편 중 앞 세 편을 테스트용으로
-X = df[["first_scrn", "first_show", "peak"]]
+X = df[["first_scrn", "first_show", "peak"]].rename(
+    columns={"first_scrn": "스크린 수", "first_show": "상영 횟수", "peak": "성수기"})
 y = df["성공"]
 st.caption(f"훈련용 {(~is_test).sum()}편 · 테스트용 {is_test.sum()}편 · 전체 {len(df)}편")
 
@@ -37,12 +38,14 @@ st.metric("로지스틱 회귀 정확도", f"{accuracy_score(y[is_test], (prob >
                      "스크린 수": df.loc[is_test, "first_scrn"].values,
                      "개봉일": df.loc[is_test, "openDt"].values})
 확률표 = 확률표.sort_values("추정 확률", ascending=False)
-fig = px.bar(확률표, x="영화", y="추정 확률", color="실제",
-             color_discrete_map={"성공": "#b07a00", "기준 미달": "#b9b3a5"})
+fig = px.scatter(확률표, x="스크린 수", y="추정 확률", color="실제", hover_name="영화",
+                 log_x=True, color_discrete_map={"성공": "#b07a00", "기준 미달": "#2b7fd6"})
 fig.add_hline(y=0.5, line_dash="dash", annotation_text="문턱값 0.5")
-fig.update_layout(xaxis_tickangle=-60, height=460, xaxis_title=None)
+fig.update_traces(marker=dict(size=11, opacity=0.8))
+fig.update_layout(height=420, xaxis_title="스크린 수(개) · 로그 눈금", yaxis_title="추정 성공 확률")
 st.plotly_chart(fig, width="stretch")
-st.caption("막대는 테스트용 영화의 추정 확률입니다. 색은 실제 레이블입니다.")
+st.caption("점 하나가 테스트용 영화 한 편입니다. 색은 실제 레이블이고, "
+           "가로 점선 위가 성공으로 예측한 영화입니다. 점에 마우스를 올리면 제목이 보입니다.")
 st.dataframe(확률표, width="stretch")
 
 choices = df.loc[is_test].copy()
